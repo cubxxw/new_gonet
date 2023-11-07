@@ -1,6 +1,7 @@
 package module
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/xuexihuang/new_gonet/example/core_func"
@@ -29,6 +30,13 @@ type ParamStru struct {
 	OrgName   string
 }
 
+func (p *ParamStru) GetUserID() string {
+	u, err := url.Parse(p.UrlPath)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get(WsUserID)
+}
 func (p *ParamStru) GetOperationID() string {
 	u, err := url.Parse(p.UrlPath)
 	if err != nil {
@@ -44,25 +52,30 @@ func (p *ParamStru) GetPlatformID() string {
 	return u.Query().Get(PlatformID)
 }
 
+type ResReleaseStru struct {
+	BackSign chan bool
+}
 type MActorIm struct {
 	//todo your module ojb values
-	mJsCore         *JsCore
-	heartTickerSend *time.Ticker //用于心跳send
-	param           *ParamStru
-	nChanLen        int //接收数据网络缓存
-	wg              sync.WaitGroup
-	a               gate.Agent
-	SessionId       string
-	closeChan       chan bool        //主动关闭协程的通道
-	ReceivMsgChan   chan interface{} //接收网络层数据通道
-	heartTicker     *time.Ticker     //用于心跳监测
-	heartFlag       bool             //初始为false，收到心跳pack设置为true
-	isclosing       bool
+	mJsCore          *JsCore
+	heartTickerSend  *time.Ticker //用于心跳send
+	param            *ParamStru
+	nChanLen         int //接收数据网络缓存
+	wg               sync.WaitGroup
+	a                gate.Agent
+	SessionId        string
+	closeChan        chan bool //主动关闭协程的通道
+	releaseResChan   chan *ResReleaseStru
+	ReceivMsgChan    chan interface{} //接收网络层数据通道
+	heartTicker      *time.Ticker     //用于心跳监测
+	heartFlag        bool             //初始为false，收到心跳pack设置为true
+	isclosing        bool
+	isReleasedJscore bool
 }
 
 func NewMActor(a gate.Agent, sessionId string, appParam *ParamStru) (MActor, error) {
-	ret := &MActorIm{param: appParam, a: a, SessionId: sessionId, closeChan: make(chan bool, 1), nChanLen: 10, ReceivMsgChan: make(chan interface{}, 10), isclosing: false,
-		heartTicker: time.NewTicker(100 * time.Second), heartFlag: false, heartTickerSend: time.NewTicker(100 * time.Second)}
+	ret := &MActorIm{param: appParam, a: a, SessionId: sessionId, releaseResChan: make(chan *ResReleaseStru, 1), closeChan: make(chan bool, 1), nChanLen: 10, ReceivMsgChan: make(chan interface{}, 10), isclosing: false,
+		heartTicker: time.NewTicker(100 * time.Second), heartFlag: false, heartTickerSend: time.NewTicker(100 * time.Second), isReleasedJscore: false}
 	///////////////////////////////////////
 	ret.mJsCore = NewJsCore(appParam, sessionId) //todo
 	///////////////////////////////////////
@@ -80,11 +93,19 @@ func (actor *MActorIm) run() {
 			if actor.isclosing == true {
 				continue
 			}
-			actor.sendResp(&ResponseSt{Type: "heart"})
+			actor.sendHeart()
 		case <-actor.closeChan:
 			log.Info("收到退出信号", "sessionId", actor.SessionId)
-			actor.mJsCore.Destroy()
+			if !actor.isReleasedJscore {
+				actor.mJsCore.Destroy()
+			}
 			return
+		case resChan := <-actor.releaseResChan:
+			log.Info("收到释放资源通道消息")
+			actor.mJsCore.Destroy()
+			actor.a.Destroy()
+			actor.isReleasedJscore = true
+			resChan.BackSign <- true
 		case recvData := <-actor.ReceivMsgChan:
 			if actor.isclosing == true {
 				continue
@@ -99,16 +120,30 @@ func (actor *MActorIm) run() {
 			//} else {
 			actor.sendEventResp(resp) // todo send msg
 			//}
-		case <-actor.heartTicker.C:
-			if actor.heartFlag == true {
-				actor.heartFlag = false
-			} else {
-				log.Error("心跳包超时错误", "sessionId", actor.SessionId)
-				actor.isclosing = true
-				actor.a.Destroy()
-			}
+			//case <-actor.heartTicker.C:
+			//	if actor.heartFlag == true {
+			//		actor.heartFlag = false
+			//	} else {
+			//		log.Error("心跳包超时错误", "sessionId", actor.SessionId)
+			//		actor.isclosing = true
+			//		actor.a.Destroy()
+			//	}
 		}
 	}
+}
+func (actor *MActorIm) ReleaseRes() {
+	log.Info("get ReleaseRes sign")
+	ind := &ResReleaseStru{BackSign: make(chan bool, 1)}
+	actor.releaseResChan <- ind
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	select {
+	case <-ctx.Done():
+		log.Info("出现超时返回，actor可能已经被异步destroy")
+	case <-ind.BackSign:
+		log.Info("通过releaseRes接口回收资源")
+	}
+
 }
 func (actor *MActorIm) Destroy() {
 	actor.closeChan <- true
@@ -138,13 +173,14 @@ func (actor *MActorIm) doRecvPro(data *common.TWSData) error {
 		log.Info("收到sub命令", "req", req, "sessionId", actor.SessionId)
 		err = actor.mJsCore.SendMsg(req)
 		if err != nil {
-			actor.sendEventResp(&core_func.EventData{ErrCode: 20000, ErrMsg: err.Error(), OperationID: req.OperationID})
+			actor.sendEventResp(&core_func.EventData{Event: req.ReqFuncName, ErrCode: 20000, ErrMsg: err.Error(),
+				OperationID: req.OperationID})
 		}
 	}
 	return nil
 }
 
-func (actor *MActorIm) sendResp(res *ResponseSt) {
+func (actor *MActorIm) sendHeart() {
 	//heart := []byte("ping")
 	resSend := &common.TWSData{MsgType: common.PingMessage, Msg: nil}
 	actor.a.WriteMsg(resSend)

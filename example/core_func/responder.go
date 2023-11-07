@@ -2,6 +2,7 @@ package core_func
 
 import (
 	"fmt"
+	log "github.com/xuexihuang/new_log15"
 
 	"github.com/OpenIMSDK/tools/errs"
 	"github.com/openimsdk/openim-sdk-core/v3/pkg/sdkerrs"
@@ -24,6 +25,7 @@ func (r *RespMessage) sendOnSuccessResp(operationID, event string, data string) 
 }
 
 func (r *RespMessage) sendOnErrorResp(operationID, event string, err error) {
+	log.Error("sendOnErrorResp", "operationID", operationID, "event", event, "err", err)
 	resp := &EventData{
 		Event:       event,
 		OperationID: operationID,

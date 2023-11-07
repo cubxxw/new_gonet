@@ -7,7 +7,19 @@ import (
 	"github.com/xuexihuang/new_gonet/gate"
 	log "github.com/xuexihuang/new_log15"
 	"net/url"
+	"sync"
 )
+
+type JsActorMap struct {
+	sync.Mutex
+	uActors map[string]MActor
+}
+
+var GJsActors *JsActorMap
+
+func init() {
+	GJsActors = &JsActorMap{uActors: make(map[string]MActor)}
+}
 
 type MActor interface {
 	//recv消息
@@ -15,6 +27,7 @@ type MActor interface {
 	//关闭循环，并释放资源
 	Destroy()
 	//
+	ReleaseRes()
 	run()
 }
 
@@ -24,7 +37,7 @@ func NewAgent(a gate.Agent) {
 	param, err := checkToken(aUerData)
 	if err != nil {
 		log.Error("token校验失败", "userData", aUerData, "sessionId", aUerData.SessionID)
-		res := &ResponseSt{Type: RESP_OP_TYPE, Cmd: CONN_CMD, Success: false, ErrMsg: "check token error"}
+		res := &ResponseSt{Type: RESP_OP_TYPE, Success: false, ErrMsg: "check token error"}
 		resb, _ := json.Marshal(res)
 		resSend := &common.TWSData{MsgType: common.MessageText, Msg: resb}
 		a.WriteMsg(resSend)
@@ -35,14 +48,22 @@ func NewAgent(a gate.Agent) {
 	actor, err := NewMActor(a, param.SessionId, param)
 	if err != nil {
 		log.Error("NewMQActor error", "err", err, "sessionId", aUerData.SessionID)
-		res := &ResponseSt{Type: RESP_OP_TYPE, Cmd: CONN_CMD, Success: false, ErrMsg: "NewMQActor error"}
+		res := &ResponseSt{Type: RESP_OP_TYPE, Success: false, ErrMsg: "NewMQActor error"}
 		resb, _ := json.Marshal(res)
 		resSend := &common.TWSData{MsgType: common.MessageText, Msg: resb}
 		a.WriteMsg(resSend)
 		a.Close()
 		return
 	}
+	GJsActors.Lock()
+	v, ok := GJsActors.uActors[param.GetUserID()]
+	if ok {
+		v.ReleaseRes()
+	}
+	GJsActors.uActors[param.GetUserID()] = actor
+	GJsActors.Unlock()
 	aUerData.ProxyBody = actor
+	aUerData.UserId = param.GetUserID()
 	a.SetUserData(aUerData)
 	log.Info("one linked", "param", param, "sessionId", aUerData.SessionID)
 }
@@ -53,6 +74,12 @@ func CloseAgent(a gate.Agent) {
 		aUerData.ProxyBody.(MActor).Destroy()
 		aUerData.ProxyBody = nil
 	}
+	GJsActors.Lock()
+	_, ok := GJsActors.uActors[aUerData.UserId]
+	if ok {
+		delete(GJsActors.uActors, aUerData.UserId)
+	}
+	GJsActors.Unlock()
 	log.Info("one dislinkder", "sessionId", a.UserData().(*common.TAgentUserData).SessionID)
 }
 func DataRecv(data interface{}, a gate.Agent) {
@@ -90,5 +117,9 @@ func checkToken(data *common.TAgentUserData) (*ParamStru, error) {
 	//ret.UserId=""
 	ret.UrlPath = data.AppString
 	ret.Token = token
+	if ret.GetUserID() == "" {
+		log.Error("userId is empty!")
+		return nil, errors.New("userId is empty")
+	}
 	return ret, nil
 }

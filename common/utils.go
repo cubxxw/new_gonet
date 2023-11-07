@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"github.com/bwmarrin/snowflake"
 	log "github.com/xuexihuang/new_log15"
 	"runtime/debug"
@@ -12,6 +13,7 @@ func TryRecoverAndDebugPrint() {
 	if errs == nil {
 		return
 	}
+	fmt.Printf("panic: %+v\n%s", errs, debug.Stack())
 	log.Crit("[Panic]", "err", errs, "stackInfo", debug.Stack())
 
 }

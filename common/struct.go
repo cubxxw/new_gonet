@@ -14,6 +14,7 @@ type TAgentUserData struct {
 	CookieVal string
 	AppString string
 	ProxyBody interface{}
+	UserId    string
 }
 type TWSData struct {
 	MsgType int

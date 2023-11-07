@@ -62,15 +62,15 @@ func (f *FuncRouter) GetTotalUnreadMsgCount(operationID string) {
 }
 
 func (f *FuncRouter) SendMessage(operationID string, args ...any) {
-	f.call(operationID, f.userForSDK.Conversation().SendMessage, args)
+	f.messageCall(operationID, f.userForSDK.Conversation().SendMessage, args...)
 }
 func (f *FuncRouter) SendMessageNotOss(operationID string, args ...any) {
-	f.call(operationID, f.userForSDK.Conversation().SendMessageNotOss, args)
+	f.messageCall(operationID, f.userForSDK.Conversation().SendMessageNotOss, args...)
 }
 
 // deprecated
 func (f *FuncRouter) SendMessageByBuffer(operationID string, args ...any) {
-	f.call(operationID, f.userForSDK.Conversation().SendMessageByBuffer, args)
+	f.messageCall(operationID, f.userForSDK.Conversation().SendMessageByBuffer, args...)
 }
 
 func (f *FuncRouter) FindMessageList(operationID string, args ...any) {
@@ -143,4 +143,12 @@ func (f *FuncRouter) SearchLocalMessages(operationID string, args ...any) {
 
 func (f *FuncRouter) SetMessageLocalEx(operationID string, args ...any) {
 	f.call(operationID, f.userForSDK.Conversation().SetMessageLocalEx, args...)
+}
+
+func (f *FuncRouter) CreateTextAtMessage(operationID string, args ...any) {
+	f.call(operationID, f.userForSDK.Conversation().CreateTextAtMessage, args...)
+}
+
+func (f *FuncRouter) CreateTextMessage(operationID string, args ...any) {
+	f.call(operationID, f.userForSDK.Conversation().CreateTextMessage, args...)
 }
